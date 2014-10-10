@@ -9,30 +9,23 @@ from smtplib import SMTPException
 
 from django.core.exceptions import ValidationError, ImproperlyConfigured
 from django.core.urlresolvers import reverse
-from django.conf import settings
-
-from django.template.response import SimpleTemplateResponse
 
 from django.shortcuts import get_object_or_404, redirect
-from django.http import Http404
 
 from django.views.generic import (
     ListView, DetailView,
-    ArchiveIndexView, DateDetailView,
     TemplateView, FormView
 )
 
 from django.contrib import messages
-from django.contrib.sites.models import Site
 from django.contrib.auth.decorators import login_required
 
 from django.utils.decorators import method_decorator
 from django.utils.translation import ugettext, ugettext_lazy as _
-from django.utils import timezone
 
 from django.forms.models import modelformset_factory
 
-from .models import Newsletter, Subscription, Submission
+from .models import Newsletter, Subscription
 from .forms import (
     SubscribeRequestForm, UserUpdateForm, UpdateRequestForm,
     UnsubscribeRequestForm, UpdateForm
@@ -525,98 +518,3 @@ class UpdateSubscriptionViev(ActionFormView):
         subscription.update(self.action)
 
         return super(UpdateSubscriptionViev, self).form_valid(form)
-
-
-class SubmissionViewBase(NewsletterMixin):
-    """ Base class for submission archive views. """
-    date_field = 'publish_date'
-    allow_empty = True
-    queryset = Submission.objects.filter(publish=True)
-    slug_field = 'message__slug'
-
-    # Specify date element notation
-    year_format = '%Y'
-    month_format = '%m'
-    day_format = '%d'
-
-    def process_url_data(self, *args, **kwargs):
-        """ Use only visible newsletters. """
-
-        kwargs['newsletter_queryset'] = NewsletterListView().get_queryset()
-        return super(
-            SubmissionViewBase, self).process_url_data(*args, **kwargs)
-
-    def get_queryset(self):
-        """ Filter out submissions for current newsletter. """
-        qs = super(SubmissionViewBase, self).get_queryset()
-
-        qs = qs.filter(newsletter=self.newsletter)
-
-        return qs
-
-    def _make_date_lookup_arg(self, value):
-        """
-        Convert a date into a datetime when the date field is a DateTimeField.
-
-        When time zone support is enabled, `date` is assumed to be in the
-        default time zone, so that displayed items are consistent with the URL.
-
-        Related discussion:
-        https://github.com/dokterbob/django-newsletter/issues/74
-        """
-        value = datetime.datetime.combine(value, datetime.time.min)
-        if settings.USE_TZ:
-            value = timezone.make_aware(value, timezone.get_default_timezone())
-        return value
-
-
-class SubmissionArchiveIndexView(SubmissionViewBase, ArchiveIndexView):
-    pass
-
-
-class SubmissionArchiveDetailView(SubmissionViewBase, DateDetailView):
-    def get_context_data(self, **kwargs):
-        """
-        Make sure the actual message is available.
-        """
-        context = \
-            super(SubmissionArchiveDetailView, self).get_context_data(**kwargs)
-
-        message = self.object.message
-
-        context.update({
-            'message': message,
-            'site': Site.objects.get_current(),
-            'date': self.object.publish_date,
-            'STATIC_URL': settings.STATIC_URL,
-            'MEDIA_URL': settings.MEDIA_URL
-        })
-
-        return context
-
-    def get_template(self):
-        """ Get the message template for the current newsletter. """
-
-        (subject_template, text_template, html_template) = \
-            self.object.newsletter.get_templates('message')
-
-        # No HTML -> no party!
-        if not html_template:
-            raise Http404(ugettext(
-                'No HTML template associated with the newsletter this '
-                'message belongs to.'
-            ))
-
-        return html_template
-
-    def render_to_response(self, context, **response_kwargs):
-        """
-        Return a simplified response; the template should be rendered without
-        any context. Use a SimpleTemplateResponse as a RequestContext should
-        not be used.
-        """
-        return SimpleTemplateResponse(
-            template=self.get_template(),
-            context=context,
-            **response_kwargs
-        )
